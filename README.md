@@ -1,6 +1,8 @@
 # rake-php-plus
 A keyword and phrase extraction library based on the Rapid Automatic Keyword Extraction algorithm (RAKE).
 
+*This repo for custom usage only*
+
 [![Latest Stable Version](https://poser.pugx.org/donatello-za/rake-php-plus/v/stable)](https://packagist.org/packages/donatello-za/rake-php-plus)
 [![Total Downloads](https://poser.pugx.org/donatello-za/rake-php-plus/downloads)](https://packagist.org/packages/donatello-za/rake-php-plus)
 [![License](https://poser.pugx.org/donatello-za/rake-php-plus/license)](https://packagist.org/packages/donatello-za/rake-php-plus)
@@ -84,14 +86,14 @@ v1.0.19
 ### With Composer
 
 ```bash
-$ composer require donatello-za/rake-php-plus
+$ composer require hocvt/rake-php-plus
 ```
 
 
 ```json
 {
     "require": {
-        "donatello-za/rake-php-plus": "^1.0"
+        "hocvt/rake-php-plus": "^1.0"
     }
 }
 ```
