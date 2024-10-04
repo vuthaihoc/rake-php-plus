@@ -8,12 +8,15 @@
 settings.json
 .directory
 /vendor
+/coverage
 Homestead.yaml
 Homestead.json
 .env
 _ide_helper.php
 composer.lock
 composer.phar
+.phpunit.result.cache
+packages.txt
 
 # Compiled source #
 ###################

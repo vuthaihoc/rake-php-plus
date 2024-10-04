@@ -2,6 +2,8 @@
 
 namespace DonatelloZa\RakePlus;
 
+use InvalidArgumentException;
+
 class RakePlus
 {
     /** @var string */
@@ -21,6 +23,18 @@ class RakePlus
 
     /** @var bool */
     private $filter_numerics = true;
+
+    /** @var string */
+    private $sentence_regex;
+
+    /** @var string */
+    private $line_terminator;
+
+    /** @var bool */
+    public $mb_support = false;
+
+    /** @var LangParseOptions */
+    public $parseOptions;
 
     const ORDER_ASC = 'asc';
 
@@ -47,14 +61,31 @@ class RakePlus
      * retrieve the stopwords from the instance.
      *
      * @param string|null                           $text              Text to turn into keywords/phrases.
-     * @param AbstractStopwordProvider|string|array $stopwords         Stopwords to use.
+     * @param AbstractStopwordProvider|string|array $stopwords         Stopwords/language to use.
      * @param int                                   $phrase_min_length Minimum keyword/phrase length.
      * @param bool                                  $filter_numerics   Filter out numeric numbers.
+     * @param null|LangParseOptions                 $parseOptions      Additional text parsing options, see:
+     *                                                                 @LangParseOptions
      */
-    public function __construct($text = null, $stopwords = 'en_US', $phrase_min_length = 0, $filter_numerics = true)
+    public function __construct($text = null, $stopwords = 'en_US', $phrase_min_length = 0, $filter_numerics = true,
+                                $parseOptions = null)
     {
+        $this->mb_support = extension_loaded('mbstring');
+
         $this->setMinLength($phrase_min_length);
         $this->setFilterNumerics($filter_numerics);
+
+        if ($parseOptions === null) {
+            $this->parseOptions = LangParseOptions::create($stopwords);
+        } else if ($parseOptions instanceof ILangParseOptions) {
+            $this->parseOptions = $parseOptions;
+        } else {
+            throw new InvalidArgumentException("The \$parseOptions argument must be an instance of ILangParseOptions.");
+        }
+
+        $this->sentence_regex = $this->parseOptions->getSentenceRegex();
+        $this->line_terminator = $this->parseOptions->getLineTerminator();
+
         if (!is_null($text)) {
             $this->extract($text, $stopwords);
         }
@@ -84,12 +115,15 @@ class RakePlus
      * @param AbstractStopwordProvider|string|array $stopwords         Stopwords to use.
      * @param int                                   $phrase_min_length Minimum keyword/phrase length.
      * @param bool                                  $filter_numerics   Filter out numeric numbers.
+     * @param null|LangParseOptions                 $parseOptions      Additional text parsing options, see:
+     *                                                                 @LangParseOptions
      *
      * @return RakePlus
      */
-    public static function create($text, $stopwords = 'en_US', $phrase_min_length = 0, $filter_numerics = true)
+    public static function create($text, $stopwords = 'en_US', $phrase_min_length = 0, $filter_numerics = true,
+                                  $parseOptions = null)
     {
-        return (new self($text, $stopwords, $phrase_min_length, $filter_numerics));
+        return (new self($text, $stopwords, $phrase_min_length, $filter_numerics, $parseOptions));
     }
 
     /**
@@ -118,12 +152,12 @@ class RakePlus
      */
     public function extract($text, $stopwords = 'en_US')
     {
-        if (!empty(trim($text))) {
+        if ($text != '') {
             if (is_array($stopwords)) {
                 $this->pattern = StopwordArray::create($stopwords)->pattern();
             } else if (is_string($stopwords)) {
                 if (is_null($this->pattern) || ($this->language != $stopwords)) {
-                    $extension = strtolower(pathinfo($stopwords, PATHINFO_EXTENSION));
+                    $extension = mb_strtolower(pathinfo($stopwords, PATHINFO_EXTENSION));
                     if (empty($extension)) {
                         // First try the .pattern file
                         $this->language_file = StopwordsPatternFile::languageFile($stopwords);
@@ -145,14 +179,19 @@ class RakePlus
                         $this->pattern = StopwordsPHP::create($this->language_file)->pattern();
                     }
                 }
-            } elseif (is_subclass_of($stopwords, AbstractStopwordProvider::class)) {
+            } elseif (is_subclass_of($stopwords, 'DonatelloZa\RakePlus\AbstractStopwordProvider')) {
                 $this->pattern = $stopwords->pattern();
             } else {
-                throw new \InvalidArgumentException('Invalid stopwords list provided for RakePlus.');
+                throw new InvalidArgumentException('Invalid stopwords list provided for RakePlus.');
             }
 
-            $sentences = $this->splitSentences($text);
-            $phrases = $this->getPhrases($sentences, $this->pattern);
+            if ($this->mb_support) {
+                $sentences = $this->splitSentencesMb($text);
+                $phrases = $this->getPhrasesMb($sentences, $this->pattern);
+            } else {
+                $sentences = $this->splitSentences($text);
+                $phrases = $this->getPhrases($sentences, $this->pattern);
+            }
             $word_scores = $this->calcWordScores($phrases);
             $this->phrase_scores = $this->calcPhraseScores($phrases, $word_scores);
         }
@@ -202,7 +241,11 @@ class RakePlus
                 // down the line when a developer attempts to
                 // append arrays to one another and one of them
                 // have a mix of integer and string keys.
-                $keywords[$word] = $word;
+                if (!$this->filter_numerics || ($this->filter_numerics && !is_numeric($word))) {
+                    if ($this->min_length === 0 || mb_strlen($word) >= $this->min_length) {
+                        $keywords[$word] = $word;
+                    }
+                }
             }
         }
 
@@ -277,12 +320,21 @@ class RakePlus
      */
     private function splitSentences($text)
     {
-        // This is an alternative pattern but it doesn't
-        // seem to like numbers:
-        // '/[\/:.\?!,;\-"\'\(\)\\\x{2018}\x{2019}\x{2013}\n\t]+/u'
+        return preg_split('/' . $this->sentence_regex . '/',
+            preg_replace('/' . $this->line_terminator . '/', ' ', $text));
+    }
 
-        return preg_split('/[.!?,;:\t\-\"\(\)\']/',
-            preg_replace('/\n/', ' ', $text));
+    /**
+     * Splits the text into an array of sentences. Uses mb_* functions.
+     *
+     * @param string $text
+     *
+     * @return array
+     */
+    private function splitSentencesMb($text)
+    {
+        return mb_split($this->sentence_regex,
+            mb_ereg_replace($this->line_terminator, ' ', $text));
     }
 
     /**
@@ -302,6 +354,37 @@ class RakePlus
             $phrases = explode('|', $phrases_temp);
             foreach ($phrases as $phrase) {
                 $phrase = mb_strtolower(trim($phrase));
+                if (!empty($phrase)) {
+                    if (!$this->filter_numerics || ($this->filter_numerics && !is_numeric($phrase))) {
+                        if ($this->min_length === 0 || mb_strlen($phrase) >= $this->min_length) {
+                            $results[] = $phrase;
+                        }
+                    }
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Split sentences into phrases by using the stopwords. Makes use of
+     * PHP's mb_* functions.
+     *
+     * @param array  $sentences
+     * @param string $pattern
+     *
+     * @return array
+     */
+    private function getPhrasesMb(array $sentences, $pattern)
+    {
+        $results = [];
+
+        foreach ($sentences as $sentence) {
+            $phrases_temp = mb_eregi_replace($pattern, '|', $sentence);
+            $phrases = explode('|', $phrases_temp);
+            foreach ($phrases as $phrase) {
+                $phrase = mb_strtolower(preg_replace('/^[\pZ\pC]+|[\pZ\pC]+$/u', '', $phrase));
                 if (!empty($phrase)) {
                     if (!$this->filter_numerics || ($this->filter_numerics && !is_numeric($phrase))) {
                         if ($this->min_length === 0 || mb_strlen($phrase) >= $this->min_length) {
@@ -390,16 +473,9 @@ class RakePlus
      */
     private function splitPhraseIntoWords($phrase)
     {
-        $words_temp = str_word_count($phrase, 1, '0123456789');
-        $words = [];
-
-        foreach ($words_temp as $word) {
-            if ($word != '' and !(is_numeric($word))) {
-                array_push($words, $word);
-            }
-        }
-
-        return $words;
+        return array_filter(preg_split('/\W+/u', $phrase, -1, PREG_SPLIT_NO_EMPTY), function ($word) {
+            return !is_numeric($word);
+        });
     }
 
     /**
@@ -422,7 +498,7 @@ class RakePlus
     public function setMinLength($min_length)
     {
         if ((int)$min_length < 0) {
-            throw new \InvalidArgumentException('Minimum phrase length must be greater than or equal to 0.');
+            throw new InvalidArgumentException('Minimum phrase length must be greater than or equal to 0.');
         }
 
         $this->min_length = (int)$min_length;
@@ -447,6 +523,7 @@ class RakePlus
      * Returns whether numeric-only phrases/keywords will be filtered
      * out or not.
      *
+     * @return bool
      */
     public function getFilterNumerics()
     {

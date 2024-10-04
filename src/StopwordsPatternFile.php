@@ -13,7 +13,7 @@ class StopwordsPatternFile extends AbstractStopwordProvider
     /**
      * StopwordsPatternFile constructor.
      *
-     * @param array $filename
+     * @param string $filename
      */
     public function __construct($filename)
     {
@@ -95,7 +95,17 @@ class StopwordsPatternFile extends AbstractStopwordProvider
         if (!file_exists($language_file)) {
             throw new \RuntimeException('Could not find the RAKE stopwords file: ' . $language_file);
         } else {
-            return file_get_contents($language_file);
+            if (extension_loaded('mbstring')) {
+                // Trim leading "/" character and trailing "/i" if it exists in the string
+                $pattern = trim(file_get_contents($language_file));
+                if (mb_substr($pattern, 0, 1) == '/' && mb_substr($pattern, -2) == '/i') {
+                    return mb_substr($pattern, 1, -2);
+                } else {
+                    return $pattern;
+                }
+            } else {
+                return file_get_contents($language_file);
+            }
         }
     }
 }
